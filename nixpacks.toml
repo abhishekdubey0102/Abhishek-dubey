@@ -1,40 +1,13 @@
 [phases.setup]
-nixPkgs = [
-  "python311",
-  "chromium",
-  "chromium-driver",
-  "glib",
-  "nss",
-  "nspr",
-  "atk",
-  "cups",
-  "dbus",
-  "expat",
-  "libdrm",
-  "libxcb",
-  "libxkbcommon",
-  "mesa",
-  "xorg.libX11",
-  "xorg.libXcomposite",
-  "xorg.libXdamage",
-  "xorg.libXext",
-  "xorg.libXfixes",
-  "xorg.libXrandr",
-  "xorg.libxshmfence",
-  "xorg.libXtst",
-  "alsa-lib",
-  "pango",
-  "cairo",
-  "freetype",
-  "fontconfig",
-]
+nixPkgs = ["python311"]
 
 [phases.install]
 cmds = [
-  "pip install -r requirements.txt",
-  "playwright install chromium",
-  "playwright install-deps chromium",
+  "python3.11 -m pip install telethon==1.28.5 aiohttp==3.9.1",
+  "python3.11 -m pip install playwright==1.40.0",
+  "python3.11 -m playwright install chromium",
+  "python3.11 -m playwright install-deps chromium"
 ]
 
 [start]
-cmd = "python main.py"
+cmd = "python3.11 main.py"
