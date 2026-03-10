@@ -1,35 +1,39 @@
 [phases.setup]
 nixPkgs = [
+  "python311",
   "chromium",
   "chromium-driver",
   "glib",
   "nss",
   "nspr",
-  "dbus",
   "atk",
   "cups",
+  "dbus",
+  "expat",
   "libdrm",
+  "libxcb",
+  "libxkbcommon",
+  "mesa",
   "xorg.libX11",
   "xorg.libXcomposite",
   "xorg.libXdamage",
   "xorg.libXext",
   "xorg.libXfixes",
   "xorg.libXrandr",
-  "libxcb",
   "xorg.libxshmfence",
-  "mesa",
-  "expat",
-  "libxkbcommon",
-  "zlib",
+  "xorg.libXtst",
+  "alsa-lib",
   "pango",
   "cairo",
-  "alsa-lib",
+  "freetype",
+  "fontconfig",
 ]
 
 [phases.install]
 cmds = [
   "pip install -r requirements.txt",
   "playwright install chromium",
+  "playwright install-deps chromium",
 ]
 
 [start]
