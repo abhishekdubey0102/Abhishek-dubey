@@ -1,13 +1,11 @@
 [phases.setup]
-nixPkgs = ["python311"]
+nixPkgs = ["python311", "chromium"]
 
 [phases.install]
 cmds = [
-  "python3.11 -m pip install telethon==1.28.5 aiohttp==3.9.1",
-  "python3.11 -m pip install playwright==1.40.0",
-  "python3.11 -m playwright install chromium",
-  "python3.11 -m playwright install-deps chromium"
+  "pip install -r requirements.txt",
+  "playwright install chromium"
 ]
 
 [start]
-cmd = "python3.11 main.py"
+cmd = "python main.py"
