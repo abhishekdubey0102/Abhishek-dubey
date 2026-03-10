@@ -1,6 +1,7 @@
 import asyncio
 import random
 import subprocess
+import os
 from playwright.async_api import async_playwright
 from logger import logger
 
@@ -11,44 +12,68 @@ class BrowserManager:
         self.pages = {}
 
     async def init(self):
+        # Install playwright chromium
         try:
             logger.info("Installing Chromium...")
-            subprocess.run(
+            result = subprocess.run(
                 ["python", "-m", "playwright", "install", "chromium"],
-                capture_output=True, timeout=120
+                capture_output=True, timeout=120, text=True
             )
-            logger.info("Chromium installed!")
+            logger.info("Playwright install done!")
         except Exception as e:
             logger.warning("Install warning: %s" % str(e))
 
         self.playwright = await async_playwright().start()
 
-        for executable in [
-            None,
+        common_args = [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--single-process',
+            '--no-zygote',
+            '--disable-blink-features=AutomationControlled',
+        ]
+
+        # Try playwright chromium first (with install-deps)
+        try:
+            subprocess.run(
+                ["python", "-m", "playwright", "install-deps", "chromium"],
+                capture_output=True, timeout=120
+            )
+        except:
+            pass
+
+        # Find chromium executable
+        chromium_paths = [
+            None,  # playwright default
+            '/nix/var/nix/profiles/default/bin/chromium',
+            '/run/current-system/sw/bin/chromium',
             '/usr/bin/chromium',
             '/usr/bin/chromium-browser',
-            '/usr/bin/google-chrome',
-        ]:
+        ]
+
+        # Also check nix store
+        try:
+            result = subprocess.run(['which', 'chromium'], capture_output=True, text=True)
+            if result.stdout.strip():
+                chromium_paths.insert(1, result.stdout.strip())
+        except:
+            pass
+
+        for executable in chromium_paths:
             try:
-                opts = {
-                    'headless': True,
-                    'args': [
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-gpu',
-                        '--disable-blink-features=AutomationControlled',
-                        '--window-size=390,844',
-                    ]
-                }
+                opts = {'headless': True, 'args': common_args}
                 if executable:
+                    if not os.path.exists(executable):
+                        continue
                     opts['executable_path'] = executable
 
                 self.browser = await self.playwright.chromium.launch(**opts)
-                logger.info("Browser started!")
+                logger.info("Browser started! Path: %s" % (executable or 'playwright default'))
                 return
             except Exception as e:
-                logger.warning("Browser option failed: %s" % str(e))
+                logger.warning("Browser option failed: %s" % str(e)[:100])
                 continue
 
         raise Exception("Browser start nahi hua!")
@@ -56,7 +81,7 @@ class BrowserManager:
     async def create_profile_pages(self, profile_id, websites):
         user_agents = [
             "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-            "Mozilla/5.0 (Linux; Android 13; Samsung Galaxy S22) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
             "Mozilla/5.0 (Linux; Android 11; Redmi Note 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36",
         ]
 
