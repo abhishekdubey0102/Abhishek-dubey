@@ -1,5 +1,7 @@
 import asyncio
 import random
+import subprocess
+import os
 from playwright.async_api import async_playwright
 from logger import logger
 
@@ -10,28 +12,61 @@ class BrowserManager:
         self.pages = {}
 
     async def init(self):
+        # Chromium install karo runtime pe
+        try:
+            logger.info("Installing Chromium...")
+            subprocess.run(["python", "-m", "playwright", "install", "chromium"], 
+                         capture_output=True, timeout=120)
+            logger.info("Chromium installed!")
+        except Exception as e:
+            logger.warning("Chromium install warning: %s" % str(e))
+
         self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-infobars',
-                '--window-size=390,844',
-            ]
-        )
-        logger.info("Browser started!")
+        
+        # Multiple launch options try karo
+        launch_options = [
+            # Option 1: Default
+            {
+                'headless': True,
+                'args': [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-blink-features=AutomationControlled',
+                    '--window-size=390,844',
+                ]
+            },
+            # Option 2: System chromium
+            {
+                'headless': True,
+                'executable_path': '/usr/bin/chromium',
+                'args': ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+            },
+            # Option 3: chromium-browser
+            {
+                'headless': True,
+                'executable_path': '/usr/bin/chromium-browser',
+                'args': ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+            }
+        ]
+
+        for i, opts in enumerate(launch_options):
+            try:
+                self.browser = await self.playwright.chromium.launch(**opts)
+                logger.info("Browser started! (option %d)" % (i+1))
+                return
+            except Exception as e:
+                logger.warning("Launch option %d failed: %s" % (i+1, str(e)))
+                continue
+
+        raise Exception("Could not start browser!")
 
     async def create_profile_pages(self, profile_id, websites):
-        # Random mobile user agents
         user_agents = [
             "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
             "Mozilla/5.0 (Linux; Android 13; Samsung Galaxy S22) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
             "Mozilla/5.0 (Linux; Android 11; Redmi Note 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36",
-            "Mozilla/5.0 (Linux; Android 12; OnePlus 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
         ]
 
         context = await self.browser.new_context(
@@ -44,17 +79,14 @@ class BrowserManager:
             has_touch=True,
         )
 
-        # Human AI fingerprint
         await context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
             Object.defineProperty(navigator, 'plugins', {get: () => [
                 {name: 'Chrome PDF Plugin'},
                 {name: 'Chrome PDF Viewer'},
-                {name: 'Native Client'}
             ]});
             Object.defineProperty(navigator, 'languages', {get: () => ['en-IN', 'en', 'hi']});
-            Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
-            window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}, app: {}};
+            window.chrome = {runtime: {}};
         """)
 
         self.pages[profile_id] = {}
