@@ -1,7 +1,6 @@
 import asyncio
 import random
 import subprocess
-import os
 from playwright.async_api import async_playwright
 from logger import logger
 
@@ -12,55 +11,47 @@ class BrowserManager:
         self.pages = {}
 
     async def init(self):
-        # Chromium install karo runtime pe
         try:
             logger.info("Installing Chromium...")
-            subprocess.run(["python", "-m", "playwright", "install", "chromium"], 
-                         capture_output=True, timeout=120)
+            subprocess.run(
+                ["python", "-m", "playwright", "install", "chromium"],
+                capture_output=True, timeout=120
+            )
             logger.info("Chromium installed!")
         except Exception as e:
-            logger.warning("Chromium install warning: %s" % str(e))
+            logger.warning("Install warning: %s" % str(e))
 
         self.playwright = await async_playwright().start()
-        
-        # Multiple launch options try karo
-        launch_options = [
-            # Option 1: Default
-            {
-                'headless': True,
-                'args': [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--disable-blink-features=AutomationControlled',
-                    '--window-size=390,844',
-                ]
-            },
-            # Option 2: System chromium
-            {
-                'headless': True,
-                'executable_path': '/usr/bin/chromium',
-                'args': ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-            },
-            # Option 3: chromium-browser
-            {
-                'headless': True,
-                'executable_path': '/usr/bin/chromium-browser',
-                'args': ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-            }
-        ]
 
-        for i, opts in enumerate(launch_options):
+        for executable in [
+            None,
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/google-chrome',
+        ]:
             try:
+                opts = {
+                    'headless': True,
+                    'args': [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu',
+                        '--disable-blink-features=AutomationControlled',
+                        '--window-size=390,844',
+                    ]
+                }
+                if executable:
+                    opts['executable_path'] = executable
+
                 self.browser = await self.playwright.chromium.launch(**opts)
-                logger.info("Browser started! (option %d)" % (i+1))
+                logger.info("Browser started!")
                 return
             except Exception as e:
-                logger.warning("Launch option %d failed: %s" % (i+1, str(e)))
+                logger.warning("Browser option failed: %s" % str(e))
                 continue
 
-        raise Exception("Could not start browser!")
+        raise Exception("Browser start nahi hua!")
 
     async def create_profile_pages(self, profile_id, websites):
         user_agents = [
@@ -81,10 +72,6 @@ class BrowserManager:
 
         await context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            Object.defineProperty(navigator, 'plugins', {get: () => [
-                {name: 'Chrome PDF Plugin'},
-                {name: 'Chrome PDF Viewer'},
-            ]});
             Object.defineProperty(navigator, 'languages', {get: () => ['en-IN', 'en', 'hi']});
             window.chrome = {runtime: {}};
         """)
