@@ -7,6 +7,12 @@ TELEGRAM_PHONE = "+919343149455"
 NOTIFY_TELEGRAM_USERNAME = "@adarshjoshi93"
 
 # ============================================================
+# OPENROUTER API - Claude Access
+# ============================================================
+OPENROUTER_API_KEY = "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"
+OPENROUTER_MODEL = "anthropic/claude-3-haiku"  # Free + Fast
+
+# ============================================================
 # TELEGRAM GROUPS
 # ============================================================
 TELEGRAM_GROUPS = [
@@ -22,28 +28,24 @@ WEBSITES = {
         "url": "https://agra91.com/#/",
         "gift_path": "/#/gift",
         "account_path": "/#/mine",
-        "dynamic_url": True
     },
     "55": {
         "url": "https://uoefkt55.com/#/",
         "gift_path": "/#/gift",
         "account_path": "/#/mine",
-        "dynamic_url": False
     },
     "999": {
         "url": "https://in999ff.com/#/",
         "gift_path": "/#/gift",
         "account_path": "/#/mine",
-        "dynamic_url": False
     },
 }
 
 # ============================================================
-# PROFILES - Phone aur Password
-# Teeno sites ka same number aur password hai
+# PROFILES
 # ============================================================
-PHONE = "9343149455"    # Bina +91 ke
-PASSWORD = "Adarsh93"   # Password
+PHONE = "9343149455"
+PASSWORD = "Adarsh93"
 
 PROFILES = [
     {
@@ -52,19 +54,12 @@ PROFILES = [
         "55":  {"phone": PHONE, "password": PASSWORD},
         "999": {"phone": PHONE, "password": PASSWORD},
     },
-    # Aur accounts add karne ho toh yahan copy karo:
-    # {
-    #     "profile_id": "profile_2",
-    #     "91":  {"phone": "PHONE2", "password": "PASS2"},
-    #     "55":  {"phone": "PHONE2", "password": "PASS2"},
-    #     "999": {"phone": "PHONE2", "password": "PASS2"},
-    # },
 ]
 
 # ============================================================
 # BOT SETTINGS
 # ============================================================
-LOGIN_CHECK_INTERVAL = 30   # Har 30 sec login check
-RETRY_ATTEMPTS = 3          # 3 baar try karo
-MIN_DELAY = 0.1             # Min delay (seconds)
-MAX_DELAY = 0.3             # Max delay (seconds)
+LOGIN_CHECK_INTERVAL = 30
+RETRY_ATTEMPTS = 3
+MIN_DELAY = 0.1
+MAX_DELAY = 0.3
