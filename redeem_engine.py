@@ -7,7 +7,7 @@ from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 from logger import logger
 from config import WEBSITES, RETRY_ATTEMPTS, MIN_DELAY, MAX_DELAY
 from human_ai import HumanAI
-from ai_fixer import ai_fixer
+# ai_fixer removed
 
 os.makedirs("screenshots", exist_ok=True)
 os.makedirs("history", exist_ok=True)
