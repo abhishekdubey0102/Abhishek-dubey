@@ -1,384 +1,443 @@
 import asyncio
 import random
-import time
-import os
-from datetime import datetime
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
+import re
 from logger import logger
-from config import WEBSITES, RETRY_ATTEMPTS, MIN_DELAY, MAX_DELAY
-from human_ai import HumanAI
-# ai_fixer removed
-
-os.makedirs("screenshots", exist_ok=True)
-os.makedirs("history", exist_ok=True)
-
-HISTORY_FILE = "history/codes.txt"
-human = HumanAI()
 
 # ============================================================
-# UTILS
+# HUMAN DELAY
 # ============================================================
-async def smart_delay(min_d=None, max_d=None):
-    await asyncio.sleep(random.uniform(min_d or MIN_DELAY, max_d or MAX_DELAY))
+async def human_delay(min_s=0.3, max_s=0.8):
+    await asyncio.sleep(random.uniform(min_s, max_s))
 
-def save_code_history(code, site_key, success, reason=""):
-    try:
-        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-            status = "SUCCESS" if success else "FAIL"
-            f.write("%s | %s | %s | %s | %s\n" % (
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                site_key, code[:8] + "...", status, reason))
-    except Exception:
-        pass
-
-async def take_screenshot(page, name):
-    try:
-        path = "screenshots/%s_%s.png" % (name, datetime.now().strftime("%H%M%S"))
-        await page.screenshot(path=path)
-        logger.info("Screenshot: %s" % path)
-        return path
-    except Exception:
-        return None
+async def human_type(page, selector, text):
+    await page.click(selector)
+    await human_delay(0.2, 0.4)
+    await page.fill(selector, "")
+    await human_delay(0.1, 0.2)
+    for char in text:
+        await page.type(selector, char)
+        await asyncio.sleep(random.uniform(0.05, 0.15))
 
 # ============================================================
-# SMART POPUP HANDLER
+# CLOSE POPUPS
 # ============================================================
-async def smart_close_popups(page):
-    selectors = [
-        'button:has-text("×")', 'button:has-text("✕")', 'button:has-text("✖")',
-        'button:has-text("Close")', '[class*="close"]', '[class*="modal-close"]',
-        '[class*="popup-close"]', 'button:has-text("Cancel")',
-        '[aria-label="close"]', '[aria-label="Close"]',
-        '.van-icon-cross', '[class*="icon-close"]',
-        '.van-overlay', '[class*="overlay"]',
+async def close_popups(page):
+    popup_selectors = [
+        'button:has-text("Close")',
+        'button:has-text("close")',
+        'button:has-text("X")',
+        'button:has-text("×")',
+        '.close-btn',
+        '.popup-close',
+        '.modal-close',
+        '[class*="close"]',
+        '.van-popup__close',
+        '.van-overlay',
+        'button:has-text("OK")',
+        'button:has-text("确定")',
+        'button:has-text("Cancel")',
     ]
-    closed = 0
-    for selector in selectors:
+    for sel in popup_selectors:
         try:
-            elements = await page.query_selector_all(selector)
-            for el in elements:
-                try:
-                    if await el.is_visible():
-                        await el.click()
-                        await asyncio.sleep(0.15)
-                        closed += 1
-                except Exception:
-                    continue
-        except Exception:
-            continue
-    return closed
+            el = page.locator(sel).first
+            if await el.is_visible():
+                await el.click()
+                await human_delay(0.3, 0.5)
+        except:
+            pass
 
 # ============================================================
-# SMART ELEMENT FINDER
+# IS LOGGED IN
 # ============================================================
-async def smart_find(page, selectors, timeout=5):
-    for selector in selectors:
-        try:
-            el = await page.wait_for_selector(selector, timeout=timeout * 1000)
-            if el and await el.is_visible():
-                return el
-        except Exception:
-            continue
-    return None
-
-# ============================================================
-# SLIDER CAPTCHA SOLVER
-# ============================================================
-async def solve_slider_captcha(page):
+async def is_logged_in(page, site_key):
     try:
-        slider = await smart_find(page, [
-            '.slider', '.slide-btn', '[class*="slider"]',
-            '[class*="slide-btn"]', '.nc_iconfont',
-            '[class*="drag"]', '.verify-drag-block',
-        ], timeout=3)
-        if not slider:
-            return True
+        logged_in_indicators = [
+            '[class*="mine"]',
+            '[class*="user"]',
+            '[class*="balance"]',
+            '[class*="wallet"]',
+            'text=Withdraw',
+            'text=Deposit',
+            'text=Recharge',
+        ]
+        for indicator in logged_in_indicators:
+            try:
+                el = page.locator(indicator).first
+                if await el.is_visible(timeout=2000):
+                    return True
+            except:
+                pass
 
-        logger.info("Captcha detected - AI solving...")
-        box = await slider.bounding_box()
-        if not box:
-            return False
+        login_indicators = [
+            'text=Login',
+            'text=Sign in',
+            'input[type="tel"]',
+            'input[placeholder*="phone"]',
+            'input[placeholder*="Phone"]',
+            'input[placeholder*="mobile"]',
+        ]
+        for indicator in login_indicators:
+            try:
+                el = page.locator(indicator).first
+                if await el.is_visible(timeout=2000):
+                    return False
+            except:
+                pass
 
-        start_x = box['x'] + box['width'] / 2
-        start_y = box['y'] + box['height'] / 2
-
-        track = await smart_find(page, [
-            '.slide-track', '[class*="track"]', '.nc-lang-cnt',
-        ], timeout=2)
-        end_x = start_x + 300
-        if track:
-            tb = await track.bounding_box()
-            if tb:
-                end_x = tb['x'] + tb['width'] - 5
-
-        # Bezier curve slide - human like
-        await page.mouse.move(start_x, start_y)
-        await asyncio.sleep(random.uniform(0.2, 0.4))
-        await page.mouse.down()
-        await asyncio.sleep(random.uniform(0.05, 0.1))
-
-        steps = 30
-        for i in range(steps):
-            t = (i + 1) / steps
-            ease = t * t * (3 - 2 * t)
-            x = start_x + (end_x - start_x) * ease
-            y = start_y + random.uniform(-1.5, 1.5)
-            await page.mouse.move(x, y)
-            await asyncio.sleep(random.uniform(0.008, 0.025))
-
-        await asyncio.sleep(random.uniform(0.1, 0.2))
-        await page.mouse.up()
-        await asyncio.sleep(1.5)
-        logger.info("Captcha solved!")
-        return True
-    except Exception as e:
-        logger.error("Captcha error: %s" % str(e))
+        return False
+    except:
         return False
 
 # ============================================================
-# LOGIN CHECK
+# AUTO LOGIN
 # ============================================================
-async def is_logged_in(page, site_url=None):
+async def auto_login(page, site_key, phone, password):
     try:
-        url = page.url.lower()
-        if "login" in url or "signin" in url:
-            return False
-        login_form = await smart_find(page, [
-            'input[type="tel"]', 'input[placeholder*="phone"]',
-        ], timeout=2)
-        if login_form:
-            return False
-        return True
-    except Exception:
-        return False
+        from config import WEBSITES
+        url = WEBSITES[site_key]['url']
 
-# ============================================================
-# AUTO LOGIN - WITH AI FIX
-# ============================================================
-async def auto_login(page, account, site_key):
-    try:
-        site = WEBSITES[site_key]
-        base_url = site['url'].replace('/#/', '')
         logger.info("Auto login: %s" % site_key)
 
-        await page.goto(base_url + '/#/login', timeout=15000)
-        await human.simulate_page_visit(page)
-        await smart_close_popups(page)
+        # Page load
+        await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+        await human_delay(2, 3)
+        await close_popups(page)
+        await human_delay(1, 2)
 
-        phone_input = await smart_find(page, [
-            'input[type="tel"]', 'input[type="text"][placeholder*="phone"]',
-            'input[placeholder*="Phone"]', 'input[placeholder*="number"]',
-            'input[placeholder*="mobile"]', 'input[placeholder*="Mobile"]',
-        ], timeout=10)
+        # Already logged in check
+        if await is_logged_in(page, site_key):
+            logger.info("Already logged in: %s" % site_key)
+            return True
 
-        if not phone_input:
+        # Login button dhundo
+        login_btns = [
+            'text=Login',
+            'text=Log in',
+            'text=Sign in',
+            'text=LOGIN',
+            '[class*="login-btn"]',
+            '[class*="loginBtn"]',
+            'button:has-text("Login")',
+        ]
+        for btn in login_btns:
+            try:
+                el = page.locator(btn).first
+                if await el.is_visible(timeout=3000):
+                    await el.click()
+                    await human_delay(1, 2)
+                    break
+            except:
+                pass
+
+        await close_popups(page)
+        await human_delay(1, 2)
+
+        # Phone input dhundo
+        phone_selectors = [
+            'input[type="tel"]',
+            'input[placeholder*="phone"]',
+            'input[placeholder*="Phone"]',
+            'input[placeholder*="mobile"]',
+            'input[placeholder*="Mobile"]',
+            'input[placeholder*="number"]',
+            'input[placeholder*="Number"]',
+            'input[name="phone"]',
+            'input[name="mobile"]',
+            'input[type="number"]',
+            'input[type="text"]',
+        ]
+
+        phone_filled = False
+        for sel in phone_selectors:
+            try:
+                el = page.locator(sel).first
+                if await el.is_visible(timeout=3000):
+                    await human_type(page, sel, phone)
+                    phone_filled = True
+                    logger.info("Phone filled: %s" % site_key)
+                    break
+            except:
+                pass
+
+        if not phone_filled:
             logger.error("Phone input not found: %s" % site_key)
             return False
 
-        phone = account['phone'].replace('+91', '').replace('+', '')
-        await human.natural_type(phone_input, phone)
-        await human.think_delay()
+        await human_delay(0.5, 1)
 
-        pass_input = await smart_find(page, ['input[type="password"]'], timeout=5)
-        if pass_input:
-            await human.natural_type(pass_input, account['password'])
-            await human.think_delay()
+        # Password input dhundo
+        pass_selectors = [
+            'input[type="password"]',
+            'input[placeholder*="password"]',
+            'input[placeholder*="Password"]',
+            'input[placeholder*="pass"]',
+            'input[name="password"]',
+        ]
 
-        await solve_slider_captcha(page)
+        pass_filled = False
+        for sel in pass_selectors:
+            try:
+                el = page.locator(sel).first
+                if await el.is_visible(timeout=3000):
+                    await human_type(page, sel, password)
+                    pass_filled = True
+                    logger.info("Password filled: %s" % site_key)
+                    break
+            except:
+                pass
 
-        # Remember password checkbox ON karo
-        remember_selectors = [
+        if not pass_filled:
+            logger.error("Password input not found: %s" % site_key)
+            return False
+
+        await human_delay(0.5, 1)
+
+        # Remember me checkbox
+        remember_sels = [
             'input[type="checkbox"]',
             '[class*="remember"]',
-            'label:has-text("Remember")',
-            'label:has-text("remember")',
-            '.remember-password',
-            '[class*="remember-password"]',
+            '[class*="Remember"]',
         ]
-        for sel in remember_selectors:
+        for sel in remember_sels:
             try:
-                el = await page.query_selector(sel)
-                if el:
-                    visible = await el.is_visible()
-                    if visible:
-                        # Check if already checked
-                        checked = await el.is_checked() if sel.startswith('input') else False
-                        if not checked:
-                            await el.click()
-                            await asyncio.sleep(0.2)
-                            logger.info("Remember password ON!")
-                        break
-            except Exception:
-                continue
+                el = page.locator(sel).first
+                if await el.is_visible(timeout=1000):
+                    checked = await el.is_checked()
+                    if not checked:
+                        await el.click()
+            except:
+                pass
 
-        # Browser mein bhi credentials save karo (JavaScript)
-        try:
-            await page.evaluate("""() => {
-                if (window.localStorage) {
-                    localStorage.setItem('rememberLogin', 'true');
-                }
-            }""")
-        except Exception:
-            pass
+        await human_delay(0.5, 1)
 
-        login_btn = await smart_find(page, [
-            'button:has-text("Log in")', 'button:has-text("Login")',
-            'button:has-text("Sign in")', 'button[type="submit"]',
-            '.login-btn', '[class*="login-btn"]',
-        ], timeout=5)
+        # Submit button
+        submit_sels = [
+            'button[type="submit"]',
+            'button:has-text("Login")',
+            'button:has-text("Log in")',
+            'button:has-text("Sign in")',
+            'button:has-text("LOGIN")',
+            'button:has-text("Submit")',
+            '[class*="login-btn"]',
+            '[class*="submit"]',
+        ]
 
-        if login_btn:
-            await human.natural_click(page, login_btn)
-            await smart_delay(2, 3)
+        submitted = False
+        for sel in submit_sels:
+            try:
+                el = page.locator(sel).first
+                if await el.is_visible(timeout=2000):
+                    await el.click()
+                    submitted = True
+                    logger.info("Login submitted: %s" % site_key)
+                    break
+            except:
+                pass
 
-        if await is_logged_in(page):
-            logger.info("Login OK: %s" % site_key)
+        if not submitted:
+            await page.keyboard.press('Enter')
+
+        await human_delay(3, 5)
+        await close_popups(page)
+        await human_delay(2, 3)
+
+        # Slider captcha handle
+        await handle_slider(page)
+        await human_delay(2, 3)
+
+        if await is_logged_in(page, site_key):
+            logger.info("Login SUCCESS: %s" % site_key)
             return True
-
-        await solve_slider_captcha(page)
-        await asyncio.sleep(1)
-        if await is_logged_in(page):
-            logger.info("Login OK (retry): %s" % site_key)
-            return True
-
-        logger.error("Login failed: %s" % site_key)
-        return False
+        else:
+            logger.error("Login failed: %s" % site_key)
+            return False
 
     except Exception as e:
         logger.error("Login error %s: %s" % (site_key, str(e)))
-        # AI Auto Fix
-        fixed = await ai_fixer.analyze_and_fix(page, str(e), site_key, account)
-        if fixed:
-            return await auto_login(page, account, site_key)
         return False
 
 # ============================================================
-# ULTRA FAST SMART REDEEM - WITH AI AUTO FIX
+# SLIDER CAPTCHA
 # ============================================================
-async def redeem_code(page, account, site_key, code):
-    site = WEBSITES[site_key]
-    base_url = site['url'].replace('/#/', '')
-
-    for attempt in range(1, RETRY_ATTEMPTS + 1):
-        try:
-            logger.info("Redeem | %s | %s... | Try: %d" % (site_key, code[:8], attempt))
-
-            # Account page
-            await page.goto(base_url + '/#/mine', timeout=15000)
-            await smart_delay(0.4, 0.7)
-            await smart_close_popups(page)
-
-            # Login check
-            if not await is_logged_in(page):
-                logger.warning("Session expired - re-login...")
-                if not await auto_login(page, account, site_key):
-                    save_code_history(code, site_key, False, "Login failed")
-                    continue
-                await page.goto(base_url + '/#/mine', timeout=15000)
-                await smart_delay(0.4, 0.6)
-                await smart_close_popups(page)
-
-            # Gift button
-            gift_btn = await smart_find(page, [
-                'text=Gifts', 'text=Gift', '[class*="gift"]',
-                'a[href*="gift"]', '.gift-item',
-            ], timeout=5)
-
-            if gift_btn:
-                await human.natural_click(page, gift_btn)
-                await smart_delay(0.3, 0.5)
-            else:
-                await page.goto(base_url + '/#/gift', timeout=15000)
-                await smart_delay(0.3, 0.5)
-
-            await smart_close_popups(page)
-
-            # Code input
-            code_input = await smart_find(page, [
-                'input[placeholder*="gift"]', 'input[placeholder*="Gift"]',
-                'input[placeholder*="code"]', 'input[placeholder*="Code"]',
-                'input[placeholder*="enter"]', 'input[placeholder*="Enter"]',
-                'input[type="text"]', '.gift-input input',
-            ], timeout=5)
-
-            if not code_input:
-                logger.warning("Code input not found (attempt %d)" % attempt)
-                await take_screenshot(page, "no_input_%s" % site_key)
-
-                # AI Auto Fix
-                fixed = await ai_fixer.analyze_and_fix(
-                    page, "element not found", site_key, account)
-                if fixed and attempt < RETRY_ATTEMPTS:
-                    await smart_delay(0.5, 1)
-                    continue
-                save_code_history(code, site_key, False, "Input not found")
-                return False
-
-            # ULTRA FAST paste via JavaScript
-            await page.evaluate("""
-                (el, val) => {
-                    el.focus();
-                    el.value = val;
-                    el.dispatchEvent(new Event('input', {bubbles: true}));
-                    el.dispatchEvent(new Event('change', {bubbles: true}));
-                    el.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true}));
-                }
-            """, code_input, code)
-            await smart_delay(0.1, 0.2)
-
-            # Receive button
-            receive_btn = await smart_find(page, [
-                'button:has-text("Receive")', 'button:has-text("Redeem")',
-                'button:has-text("Submit")', 'button:has-text("Confirm")',
-                'button:has-text("Claim")', '[class*="receive"]',
-                '[class*="redeem"]', '[class*="submit"]',
-            ], timeout=5)
-
-            if receive_btn:
-                await human.natural_click(page, receive_btn)
-                await smart_delay(0.5, 0.9)
-
-            # OK/Confirm button
-            confirm_btn = await smart_find(page, [
-                'button:has-text("OK")', 'button:has-text("Confirm")',
-                'button:has-text("Yes")', '[class*="confirm"]',
-            ], timeout=3)
-            if confirm_btn:
-                await human.natural_click(page, confirm_btn)
-                await smart_delay(0.2, 0.4)
-
-            # Result check
-            page_text = (await page.content()).lower()
-            success_words = ["success", "congratulation", "received",
-                           "redeemed", "claimed", "reward", "bonus"]
-            fail_words = ["invalid", "expired", "already used",
-                         "not exist", "incorrect", "wrong"]
-
-            if any(w in page_text for w in success_words):
-                logger.info("SUCCESS! %s | %s..." % (site_key, code[:8]))
-                await take_screenshot(page, "success_%s" % site_key)
-                save_code_history(code, site_key, True)
-                return True
-            elif any(w in page_text for w in fail_words):
-                logger.warning("Invalid/Expired: %s" % site_key)
-                save_code_history(code, site_key, False, "Invalid/Expired")
-                return False
-            else:
-                logger.info("Submitted: %s" % site_key)
-                await take_screenshot(page, "submitted_%s" % site_key)
-                save_code_history(code, site_key, True, "Assumed success")
-                return True
-
-        except Exception as e:
-            logger.error("Redeem error (attempt %d) %s: %s" % (attempt, site_key, str(e)))
-            await take_screenshot(page, "error_%s" % site_key)
-
-            # AI AUTO FIX!
-            fixed = await ai_fixer.analyze_and_fix(page, str(e), site_key, account)
-            if fixed and attempt < RETRY_ATTEMPTS:
-                logger.info("AI fixed! Retrying...")
-                await smart_delay(0.5, 1)
-                continue
-
-    save_code_history(code, site_key, False, "All attempts failed")
+async def handle_slider(page):
+    try:
+        slider_sels = [
+            '[class*="slider"]',
+            '[class*="drag"]',
+            '[class*="swipe"]',
+            '.nc_iconfont',
+            '#nc_1_n1z',
+        ]
+        for sel in slider_sels:
+            try:
+                slider = page.locator(sel).first
+                if await slider.is_visible(timeout=2000):
+                    box = await slider.bounding_box()
+                    if box:
+                        start_x = box['x'] + box['width'] / 2
+                        start_y = box['y'] + box['height'] / 2
+                        await page.mouse.move(start_x, start_y)
+                        await page.mouse.down()
+                        await human_delay(0.3, 0.5)
+                        for i in range(20):
+                            await page.mouse.move(
+                                start_x + (i * 15),
+                                start_y + random.uniform(-2, 2)
+                            )
+                            await asyncio.sleep(0.05)
+                        await page.mouse.up()
+                        await human_delay(1, 2)
+                        logger.info("Slider handled!")
+                        return True
+            except:
+                pass
+    except:
+        pass
     return False
+
+# ============================================================
+# REDEEM CODE
+# ============================================================
+async def redeem_code(page, site_key, code, phone, password):
+    try:
+        from config import WEBSITES
+
+        # Login check
+        if not await is_logged_in(page, site_key):
+            success = await auto_login(page, site_key, phone, password)
+            if not success:
+                return False
+
+        base_url = WEBSITES[site_key]['url'].rstrip('/#/')
+
+        # Gift page pe jao
+        gift_urls = [
+            base_url + '/#/gift',
+            base_url + '/#/activity/gift',
+            base_url + '/#/welfare/gift',
+            base_url + '/#/bonus',
+        ]
+
+        gift_found = False
+        for gift_url in gift_urls:
+            try:
+                await page.goto(gift_url, wait_until='domcontentloaded', timeout=15000)
+                await human_delay(2, 3)
+                await close_popups(page)
+
+                # Gift input check
+                gift_input = page.locator('input').first
+                if await gift_input.is_visible(timeout=3000):
+                    gift_found = True
+                    break
+            except:
+                pass
+
+        if not gift_found:
+            # Navigation se gift dhundo
+            gift_nav_sels = [
+                'text=Gift',
+                'text=gift',
+                'text=Redeem',
+                'text=Bonus',
+                '[class*="gift"]',
+                '[href*="gift"]',
+            ]
+            for sel in gift_nav_sels:
+                try:
+                    el = page.locator(sel).first
+                    if await el.is_visible(timeout=2000):
+                        await el.click()
+                        await human_delay(2, 3)
+                        gift_found = True
+                        break
+                except:
+                    pass
+
+        await close_popups(page)
+        await human_delay(1, 2)
+
+        # Code input dhundo
+        code_selectors = [
+            'input[placeholder*="gift"]',
+            'input[placeholder*="Gift"]',
+            'input[placeholder*="code"]',
+            'input[placeholder*="Code"]',
+            'input[placeholder*="redeem"]',
+            'input[type="text"]',
+            'input',
+        ]
+
+        code_filled = False
+        for sel in code_selectors:
+            try:
+                inputs = page.locator(sel)
+                count = await inputs.count()
+                for i in range(count):
+                    el = inputs.nth(i)
+                    if await el.is_visible(timeout=1000):
+                        await el.click()
+                        await human_delay(0.2, 0.4)
+                        await el.fill("")
+                        await page.keyboard.type(code, delay=50)
+                        code_filled = True
+                        logger.info("Code filled: %s - %s" % (site_key, code[:8]))
+                        break
+                if code_filled:
+                    break
+            except:
+                pass
+
+        if not code_filled:
+            logger.error("Code input not found: %s" % site_key)
+            return False
+
+        await human_delay(0.5, 1)
+
+        # Submit
+        submit_sels = [
+            'button:has-text("Redeem")',
+            'button:has-text("Submit")',
+            'button:has-text("Confirm")',
+            'button:has-text("Exchange")',
+            'button:has-text("Claim")',
+            'button[type="submit"]',
+            'button',
+        ]
+
+        for sel in submit_sels:
+            try:
+                el = page.locator(sel).first
+                if await el.is_visible(timeout=2000):
+                    await el.click()
+                    logger.info("Redeem submitted: %s" % site_key)
+                    break
+            except:
+                pass
+
+        await human_delay(2, 3)
+        await close_popups(page)
+
+        # Result check
+        success_texts = ['success', 'Success', 'congratul', 'reward', 'Reward', 'claimed', 'received']
+        fail_texts = ['invalid', 'Invalid', 'expired', 'Expired', 'used', 'Used', 'wrong', 'Wrong']
+
+        content = await page.content()
+        content_lower = content.lower()
+
+        for text in success_texts:
+            if text.lower() in content_lower:
+                logger.info("REDEEM SUCCESS: %s - %s" % (site_key, code[:8]))
+                return True
+
+        for text in fail_texts:
+            if text.lower() in content_lower:
+                logger.warning("Redeem failed (invalid/used): %s - %s" % (site_key, code[:8]))
+                return False
+
+        logger.info("Redeem done (unknown result): %s" % site_key)
+        return True
+
+    except Exception as e:
+        logger.error("Redeem error %s: %s" % (site_key, str(e)))
+        return False
