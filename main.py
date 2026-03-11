@@ -27,7 +27,7 @@ async def init_all_profiles():
             page = pages[site_key]
             account = profile[site_key]
             logger.info("Login: %s - %s" % (profile_id, site_key))
-            await auto_login(page, account, site_key)
+            await auto_login(page, site_key, account["phone"], account["password"])
             await asyncio.sleep(0.5)
 
     logger.info("All profiles ready!")
@@ -44,9 +44,9 @@ async def health_monitor():
                 for site_key in WEBSITES.keys():
                     page = browser_manager.get_page(profile_id, site_key)
                     if page:
-                        if not await is_logged_in(page):
+                        if not await is_logged_in(page, site_key):
                             logger.warning("Logged out: %s - %s" % (profile_id, site_key))
-                            await auto_login(page, profile[site_key], site_key)
+                            await auto_login(page, site_key, profile[site_key]["phone"], profile[site_key]["password"])
         except Exception as e:
             logger.error("Health error: %s" % str(e))
         await asyncio.sleep(LOGIN_CHECK_INTERVAL)
